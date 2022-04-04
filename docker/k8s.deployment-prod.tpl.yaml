@@ -1,0 +1,117 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: {{application}}
+  name: {{application}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{application}}
+  template:
+    metadata:
+      labels:
+        app: {{application}}
+    spec:
+      initContainers:
+        - name: share-code
+          image: {{IMAGE_NAME}}
+          imagePullPolicy: Always
+          args:
+            - '/bin/sh'
+            - '-c'
+            - 'cp -r /var/www/html/. /code;'
+          volumeMounts:
+            - name: share-files
+              mountPath: /code
+      containers:
+      - name: php
+        image: {{IMAGE_NAME}}
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: share-files
+            mountPath: /code
+          - name: log-local-storage
+            mountPath: /var/log/php
+        lifecycle:
+          postStart:
+            exec:
+              command: [ "/bin/sh", "-c", "cd /code && php start.php start -d" ]
+      imagePullSecrets:
+        - name: my-private-registrykey
+      volumes:
+        - name: log-local-storage
+          hostPath:
+            path: /log/{{application}}.k8sv2.wpjs.cc
+        - name: share-files
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: {{application}}
+  name: {{application}}
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 9988
+    name: web
+  - port: 8080
+    protocol: TCP
+    targetPort: 8877
+    name: workerman
+  selector:
+    app: {{application}}
+
+---
+# https://cert-manager.io/docs/usage/certificate/
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name:  {{application}}.k8sv2.wpjs.cc
+  # namespace: prod
+spec:
+  secretName:  {{application}}.k8sv2.wpjs.cc-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  commonName:  {{application}}.k8sv2.wpjs.cc
+  dnsNames:
+  - {{application}}.k8sv2.wpjs.cc
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{application}}-ingress
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: letsencrypt-production
+spec:
+  rules:
+    - host: {{application}}.k8sv2.wpjs.cc
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{application}}
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+          - backend:
+              service:
+                name: {{application}}
+                port:
+                  number: 8080
+            path: /websocket
+            pathType: Prefix
+  tls:
+    - hosts:
+      - {{application}}.k8sv2.wpjs.cc
+      secretName: {{application}}.k8sv2.wpjs.cc-tls

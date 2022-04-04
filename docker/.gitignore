@@ -1,0 +1,4 @@
+k8s.deployment.yaml
+k8s.deployment-test.yaml
+k8s.deployment-prod.yaml
+!.gitignore

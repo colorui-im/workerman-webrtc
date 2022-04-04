@@ -1,6 +1,7 @@
 <?php
 // 信令服务器(Signaling Server)地址，需要用wss协议，并且必须是域名
 $SIGNALING_ADDRESS = 'ws://127.0.0.1:8877';
+$SIGNALING_ADDRESS = 'wss://workerman-webrtc-prod.k8sv2.wpjs.cc/websocket';
 
 /*
 $SSL_CONTEXT = array(

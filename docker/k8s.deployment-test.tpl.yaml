@@ -1,0 +1,277 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{application}}-env
+  # namespace: kubernetes-for-laravel
+data:
+  env: |
+    APP_NAME=Laravel
+    APP_ENV=local
+    APP_KEY=base64:l0dJDXSDZV8OrDPohHzLR7CZN64xR4yxFDsugQMkm4k=
+    APP_DEBUG=false
+    APP_URL=http://localhost
+
+    LOG_CHANNEL=stack
+    LOG_LEVEL=debug
+
+    DB_CONNECTION=mysql
+    DB_HOST=rm-uf6u4wd27i9d6qo4tio.mysql.rds.aliyuncs.com
+    DB_PORT=3306
+    DB_DATABASE=colorui-im
+    DB_USERNAME=wpjscc
+
+    BROADCAST_DRIVER=log
+    CACHE_DRIVER=file
+    QUEUE_CONNECTION=sync
+    SESSION_DRIVER=file
+    SESSION_LIFETIME=120
+
+    MEMCACHED_HOST=127.0.0.1
+
+    REDIS_HOST=127.0.0.1
+    REDIS_PASSWORD=null
+    REDIS_PORT=6379
+
+    MAIL_MAILER=smtp
+    MAIL_HOST=mailhog
+    MAIL_PORT=1025
+    MAIL_USERNAME=null
+    MAIL_PASSWORD=null
+    MAIL_ENCRYPTION=null
+    MAIL_FROM_ADDRESS=null
+    MAIL_FROM_NAME="${APP_NAME}"
+
+    AWS_ACCESS_KEY_ID=
+    AWS_SECRET_ACCESS_KEY=
+    AWS_DEFAULT_REGION=us-east-1
+    AWS_BUCKET=
+
+    PUSHER_APP_ID=
+    PUSHER_APP_KEY=
+    PUSHER_APP_SECRET=
+    PUSHER_APP_CLUSTER=mt1
+
+    MIX_PUSHER_APP_KEY="${PUSHER_APP_KEY}"
+    MIX_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"
+
+    IM_REQISTER_ADDRESS = 127.0.0.1:1240
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{application}}-nginx-config
+  # namespace: kubernetes-for-laravel
+  labels:
+    tier: backend
+data:
+  config : |
+    server {
+      index index.php index.html;
+      error_log  /var/log/nginx/error.log;
+      access_log /var/log/nginx/access.log;
+      root /code/public;
+      add_header X-Frame-Options "SAMEORIGIN";
+      add_header X-XSS-Protection "1; mode=block";
+      add_header X-Content-Type-Options "nosniff";
+      location / {
+          try_files $uri $uri/ /index.php?$query_string;
+      }
+      location ~ \.php$ {
+          try_files $uri =404;
+          fastcgi_split_path_info ^(.+\.php)(/.+)$;
+          fastcgi_pass localhost:9000;
+          fastcgi_index index.php;
+          include fastcgi_params;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+          fastcgi_param PATH_INFO $fastcgi_path_info;
+        }
+    }
+
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      close;
+    }
+
+    server {
+      listen *:8080;
+      location / {
+        proxy_pass http://localhost:8284;
+        proxy_read_timeout 300s;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+      }
+
+      access_log /var/log/nginx/workerman.access.log;
+      error_log  /var/log/nginx/workermane.rror.log;
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{application}}-mysql-password
+  # namespace: kubernetes-for-laravel
+type: Opaque
+stringData:
+  password: Jc510061372
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: {{application}}
+  name: {{application}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{application}}
+  template:
+    metadata:
+      labels:
+        app: {{application}}
+    spec:
+      initContainers:
+        - name: share-code
+          image: {{IMAGE_NAME}}
+          imagePullPolicy: Always
+          args:
+            - '/bin/sh'
+            - '-c'
+            - 'cp -r /var/www/html/. /code;'
+          volumeMounts:
+            - name: share-files
+              mountPath: /code
+      containers:
+      - name: php
+        # image: wpjscc/laravel-k8s-demo
+        image: {{IMAGE_NAME}}
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: {{application}}-mysql-password
+        # envFrom:
+        #   - configMapRef:
+        #       name: {{application}}-env
+        volumeMounts:
+          - name: share-files
+            mountPath: /code
+          - name: log-local-storage
+            mountPath: /code/storage/logs
+          - name: log-local-storage
+            mountPath: /var/log/php
+          - name: {{application}}-env
+            mountPath: /code/.env
+            subPath: .env
+        lifecycle:
+          postStart:
+            exec:
+              command: [ "/bin/sh", "-c", "chmod -R 777 /code/storage;chmod -R 777 /code/bootstrap;cd /code/workerman && php start.php start -d" ]
+      - image: nginx
+        name: nginx
+        ports:
+          - containerPort: 80
+        volumeMounts:
+          - name: config
+            mountPath: /etc/nginx/conf.d
+          - name: share-files
+            mountPath: /code
+          - name: log-local-storage
+            mountPath: /var/log/nginx
+      imagePullSecrets:
+        - name: my-private-registrykey
+      volumes:
+        - name: log-local-storage
+          hostPath:
+            path: /log/{{application}}.k8sv2.wpjs.cc
+        - name: config
+          configMap:
+            name: {{application}}-nginx-config
+            items:
+              - key: config
+                path: site.conf
+        - name:  {{application}}-env
+          configMap:
+            name: {{application}}-env
+            items:
+              - key: env
+                path: .env
+        - name: share-files
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: {{application}}
+  name: {{application}}
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+    name: web
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+    name: workerman
+  selector:
+    app: {{application}}
+
+---
+# https://cert-manager.io/docs/usage/certificate/
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name:  {{application}}.k8sv2.wpjs.cc
+  # namespace: prod
+spec:
+  secretName:  {{application}}.k8sv2.wpjs.cc-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  commonName:  {{application}}.k8sv2.wpjs.cc
+  dnsNames:
+  - {{application}}.k8sv2.wpjs.cc
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{application}}-ingress
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: letsencrypt-production
+spec:
+  rules:
+    - host: {{application}}.k8sv2.wpjs.cc
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{application}}
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+          - backend:
+              service:
+                name: {{application}}
+                port:
+                  number: 8080
+            path: /websocket
+            pathType: Prefix
+  tls:
+    - hosts:
+      - {{application}}.k8sv2.wpjs.cc
+      secretName: {{application}}.k8sv2.wpjs.cc-tls
